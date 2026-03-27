@@ -52,30 +52,10 @@ LONGCAT_API_KEY="sk-your_longcat_api_key"
 🛠 核心工具集 (Tools)
 
 rag_tool：本地非结构化长文本（STATIC 静态知识）。基于 LlamaIndex 与本地 ChromaDB 构建。专门用于“啃”《宁德时代2025年度报告.pdf》等数百页的复杂研报。内置 SentenceSplitter 与全局热缓存机制，不仅能精准提取财务数据，还会强制将溯源切片（Source Nodes）打包返回，为后台诊断提供绝对的“开卷证据”。
+
 price_tool：极高频的金融交易数据（DYNAMIC 强时效数据）。垂直领域的“特种兵”工具。专门对接外部金融行情 API（如Yahoo Finance 等）。能够绕开大模型的知识盲区，毫秒级抓取个股的实时现价、涨跌幅、市盈率等绝对动态指标。
+
 web_search_tool：全网最新资讯与行业动态（DYNAMIC 泛知识）。大模型的“眼睛”。通过外挂搜索引擎 API（如 Tavily、Bing Search），打破 LLM 训练数据的知识截止日期限制。用于交叉验证本地财报数据的市场反馈，或补充突发性的行业政策新闻。
-
-🔄 中间件与状态流转机制
-
-系统通过完整的流水线实现对错误回答的精准捕获与重构：
-
-Code snippet
-graph TD
-    A[一键启动自动巡检] --> B[HTTP探针获取真实依据]
-    B --> C{Qwen 老中医开卷判案}
-    
-    C -->|资料有且AI答对| D1[FALSE_ALARM]
-    D1 -->|直接作废| E1[丢弃/标记ignored]
-    
-    C -->|询问实时行情| D2[DYNAMIC]
-    D2 -->|时效问题| E2[归档跳过]
-    
-    C -->|AI漏答或出现幻觉| D3[STATIC 静态错误]
-    D3 --> F[LongCat 修复师]
-    
-    F -->|携带真实依据| G[深度思考重写黄金答案]
-    G --> H[写入数据库, 状态变更为 auto_fixed]
-📚 知识库管理 (RAG)
 
 
 <img width="2880" height="1462" alt="9882ebd4061cb7efe73d81faf98ef5a7" src="https://github.com/user-attachments/assets/7a2f3cf3-543a-4e6d-9077-0aa1000e70bc" />
