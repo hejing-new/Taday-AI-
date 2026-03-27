@@ -1,0 +1,26 @@
+# ==========================================
+# 🚀 Taday AI 核心依赖清单 (Auto-Resolved)
+# ==========================================
+
+# --- 基础 Web 与 API 框架 ---
+fastapi>=0.135.2
+uvicorn>=0.23.0
+gradio>=6.10.0
+pydantic>=2.12.5
+
+# --- AI Agent 与 RAG 生态 ---
+langchain-core>=1.2.22
+langchain-openai>=1.1.12
+langgraph>=1.1.3
+llama-index>=0.14.19
+
+# --- 向量数据库与底层工具 ---
+chromadb>=1.5.5
+pymupdf>=1.23.0
+pandas>=3.0.1
+
+# --- 网络请求与工具链 ---
+openai>=2.30.0
+python-dotenv>=1.2.2
+requests>=2.31.0
+tenacity>=8.2.3
