@@ -32,7 +32,8 @@ if hasattr(sys.stderr, 'buffer'):
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # 全局缓存（懒加载，第一次调用时才初始化）
-_QUERY_ENGINE_CACHE = None
+# 结构: {collection_name: query_engine}
+_QUERY_ENGINE_CACHE = {}
 
 
 def _setup_settings():
@@ -75,27 +76,31 @@ def _get_embedding_model():
     return Settings.embed_model
 
 
-def get_query_engine():
+def get_query_engine(collection_name: str = "catl_report", pdf_filename: str = None):
     """
     获取查询引擎（懒加载模式）。
     首次调用时初始化，后续调用返回缓存。
+
+    Args:
+        collection_name: ChromaDB 集合名，不同公司/文档使用不同集合
+        pdf_filename: PDF 文件名（位于 data/ 目录下），为 None 时默认为宁德时代2025年度报告.pdf
     """
-    global _QUERY_ENGINE_CACHE
-    if _QUERY_ENGINE_CACHE is not None:
-        return _QUERY_ENGINE_CACHE
+    if collection_name in _QUERY_ENGINE_CACHE:
+        return _QUERY_ENGINE_CACHE[collection_name]
 
     _setup_settings()
     _get_embedding_model()
 
-    logger.info("正在检查或初始化本地知识库状态...")
+    logger.info(f"正在检查或初始化本地知识库状态 [collection: {collection_name}]...")
     current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(current_dir, CHROMA_DB_PATH)
     data_path = os.path.join(current_dir, DATA_PATH)
-    pdf_path = os.path.join(data_path, "宁德时代2025年度报告.pdf")
+    if pdf_filename is None:
+        pdf_filename = "宁德时代2025年度报告.pdf"
+    pdf_path = os.path.join(data_path, pdf_filename)
 
     db = chromadb.PersistentClient(path=db_path)
     collections = [c.name for c in db.list_collections()]
-    collection_name = "catl_report"
 
     chroma_collection = db.get_or_create_collection(collection_name)
     vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
@@ -129,30 +134,49 @@ def get_query_engine():
         )
         logger.info("财报解析与向量化落盘完成")
 
-    _QUERY_ENGINE_CACHE = index.as_query_engine(
+    engine = index.as_query_engine(
         similarity_top_k=8,
         response_mode="compact"
     )
-    return _QUERY_ENGINE_CACHE
+    _QUERY_ENGINE_CACHE[collection_name] = engine
+    return engine
 
 
-def clear_cache():
-    """清除查询引擎缓存（用于测试或热重载）"""
+def list_available_collections():
+    """列出 ChromaDB 中已有的所有集合（即已入库的财报）"""
+    current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    db_path = os.path.join(current_dir, CHROMA_DB_PATH)
+    db = chromadb.PersistentClient(path=db_path)
+    return [{"name": c.name, "count": c.count()} for c in db.list_collections()]
+
+
+def clear_cache(collection_name: str = None):
+    """
+    清除查询引擎缓存（用于测试或热重载）
+
+    Args:
+        collection_name: 只清除指定集合的缓存，为 None 时清除全部
+    """
     global _QUERY_ENGINE_CACHE
-    _QUERY_ENGINE_CACHE = None
-    logger.info("查询引擎缓存已清除")
+    if collection_name is None:
+        _QUERY_ENGINE_CACHE.clear()
+        logger.info("全部查询引擎缓存已清除")
+    elif collection_name in _QUERY_ENGINE_CACHE:
+        del _QUERY_ENGINE_CACHE[collection_name]
+        logger.info(f"查询引擎缓存已清除: {collection_name}")
 
 
 @tool
-def analyze_catl_report(query: str) -> str:
+def analyze_catl_report(query: str, collection_name: str = "catl_report") -> str:
     """
-    当需要回答关于【宁德时代】（CATL）的财务数据、业务营收、毛利率、产能、战略规划、
+    当需要回答关于【上市公司】的财务数据、业务营收、毛利率、产能、战略规划、
     技术研发投入或具体历史年份的财报细节时，必须调用此工具。
     输入参数 query 应该是具体且清晰的查询问题。
+    collection_name: 知识库集合名称，不同公司使用不同集合（默认 catl_report）。
     """
-    logger.info(f"深度研究员正在翻阅宁德时代财报检索: '{query}'")
+    logger.info(f"深度研究员正在翻阅财报检索 [库: {collection_name}]: '{query}'")
     try:
-        engine = get_query_engine()
+        engine = get_query_engine(collection_name=collection_name)
         response = engine.query(query)
 
         final_res = f"【结论】: {str(response)}\n\n【知识库原始证据】:\n"

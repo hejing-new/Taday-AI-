@@ -59,8 +59,9 @@ def real_rag_backend(user_message, history, s_id):
         
         yield thinking_log, "🔄 智能体正在启动...", source_cards
 
-        # 2. 流式监听 LangGraph 执行状态
-        for output in app_graph.stream(initial_state):
+        # 2. 流式监听 LangGraph 执行状态（传入 thread_id 实现会话记忆）
+        config = {"configurable": {"thread_id": s_id}}
+        for output in app_graph.stream(initial_state, config=config):
             for node_name, node_state in output.items():
                 
                 if node_name == "agent":

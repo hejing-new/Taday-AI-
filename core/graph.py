@@ -8,12 +8,14 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
+from langgraph.checkpoint.memory import MemorySaver
 from datetime import datetime # 确保文件顶部有这个引
 
-# 导入我们千辛万苦打磨好的三个“得力干将”
+# 导入工具
 from tools.rag_tool import analyze_catl_report
 from tools.price_tool import get_stock_price
 from tools.web_search_tool import web_search_tool
+from tools.sql_tool import query_financial_db
 
 # ================= 1. 初始化环境与大模型 =================
 from config import API_KEY, BASE_URL, CHAT_MODEL
@@ -34,6 +36,7 @@ llm_with_tools = llm.bind_tools(tools)
 # Agent 的记忆库，保存着所有的聊天记录
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
+    thread_id: str = "default"  # 会话标识，不同用户/窗口独立
 
 # ================= 3. 定义节点 (Nodes) =================
 # 节点 A：大脑思考节点
@@ -115,8 +118,9 @@ workflow.add_edge(START, "agent")
 workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", "__end__": END})
 workflow.add_edge("tools", "agent") # 工具执行完，必须把结果还给大脑重新思考
 
-# 编译生成最终的智能体
-app_graph = workflow.compile()
+# 编译生成最终的智能体（带检查点，支持多会话记忆）
+memory_saver = MemorySaver()
+app_graph = workflow.compile(checkpointer=memory_saver)
 
 # ================= 6. 终端终极连调测试 =================
 if __name__ == "__main__":
@@ -128,10 +132,11 @@ if __name__ == "__main__":
     print("-" * 50)
 
     # 构造初始记忆库
-    initial_state = {"messages": [HumanMessage(content=user_input)]}
+    initial_state = {"messages": [HumanMessage(content=user_input)], "thread_id": "test_session"}
 
     # 让 LangGraph 开始运转！(这里我们不用 stream，直接 invoke 看最终结果)
-    result = app_graph.invoke(initial_state)
+    config = {"configurable": {"thread_id": "test_session"}}
+    result = app_graph.invoke(initial_state, config=config)
 
     print("\n" + "=" * 50)
     print("🏁 最终生成的研报级回答：\n")
