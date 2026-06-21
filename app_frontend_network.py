@@ -167,7 +167,7 @@ with gr.Blocks(title="Taday 智能助手") as demo:
             with open(file.name, "rb") as f:
                 files = {"file": (os.path.basename(file.name), f, "application/pdf")}
                 # 🚀 使用传入的独立 s_id
-                resp = requests.post(f"http://127.0.0.1:8000/api/v1/upload_temp?session_id={s_id}", files=files)
+                resp = requests.post(f"{API_URL}/api/v1/upload_temp?session_id={s_id}", files=files)
             return f"✅ 已挂载: {os.path.basename(file.name)}"
         except Exception as e:
             return f"❌ 错误: {str(e)}"
@@ -320,7 +320,7 @@ with gr.Blocks(title="Taday 智能助手") as demo:
         if vote.liked:
             gr.Info("👍 感谢您的肯定！")
             try:
-                requests.post("http://127.0.0.1:8001/api/v1/feedback/cancel", json=payload, timeout=3)
+                requests.post(f"{ADMIN_API_URL}/api/v1/feedback/cancel", json=payload, timeout=3)
                 # 如果点赞了，把它从点踩备忘录里划掉
                 if qa_key in downvoted_set:
                     downvoted_set.remove(qa_key)
@@ -331,7 +331,7 @@ with gr.Blocks(title="Taday 智能助手") as demo:
             if qa_key in downvoted_set:
                 # 情况 A：如果备忘录里已经有它了，说明这是用户第二次点击 👎！代表【撤销】！
                 try:
-                    requests.post("http://127.0.0.1:8001/api/v1/feedback/cancel", json=payload, timeout=3)
+                    requests.post(f"{ADMIN_API_URL}/api/v1/feedback/cancel", json=payload, timeout=3)
                     gr.Info("🔄 已撤销点踩反馈！")
                     downvoted_set.remove(qa_key) # 从备忘录里划掉
                 except Exception as e:
@@ -339,7 +339,7 @@ with gr.Blocks(title="Taday 智能助手") as demo:
             else:
                 # 情况 B：备忘录里没有它，说明这是第一次正常的点踩 👎！代表【写入】！
                 try:
-                    resp = requests.post("http://127.0.0.1:8001/api/v1/feedback", json=payload, timeout=5)
+                    resp = requests.post(f"{ADMIN_API_URL}/api/v1/feedback", json=payload, timeout=5)
                     if resp.status_code == 200:
                         gr.Info("👎 反馈已同步至高管质检草稿箱！")
                         downvoted_set.add(qa_key) # 记入备忘录

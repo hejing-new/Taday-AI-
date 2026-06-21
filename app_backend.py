@@ -162,6 +162,7 @@ async def chat_endpoint(request: ChatRequest):
 # 4. 启动服务 (仅在直接运行此文件时执行)
 # ==========================================
 if __name__ == "__main__":
-    print("🚀 正在启动 Taday 后端 API 服务 (端口: 8000)...")
+    from config import PORT_API
+    print(f"🚀 正在启动 Taday 后端 API 服务 (端口: {PORT_API})...")
     # 注意：在生产环境中通常用 gunicorn 启动
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=PORT_API)

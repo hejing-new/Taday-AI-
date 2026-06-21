@@ -1,10 +1,11 @@
+# -*- coding: utf-8 -*-
 """
-Taday 金融智能体 — 一键启动脚本
+Taday 金融智能体 - 一键启动脚本
 
 启动顺序：
   1. 初始化数据库（init_sql_db）
-  2. 启动 FastAPI 对话后端 (8000)
-  3. 启动 FastAPI 管理后台 API (8001)
+  2. 启动 FastAPI 对话后端 (8002)
+  3. 启动 FastAPI 管理后台 API (8003)
   4. 启动 C 端 Gradio 对话界面 (7860)
   5. 启动 B 端 Gradio 管理后台 (7861)
 
@@ -19,6 +20,12 @@ import os
 import time
 import subprocess
 import argparse
+import io
+
+# Windows 编码修复
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # 确保项目根目录在路径中
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -36,7 +43,7 @@ def init_db():
 
 def start_api():
     """启动 FastAPI 后端 API"""
-    print("🚀 启动 FastAPI 对话后端 (端口 8000)...")
+    print("🚀 启动 FastAPI 对话后端 (端口 8002)...")
     p = subprocess.Popen(
         [sys.executable, "app_backend.py"],
         stdout=subprocess.DEVNULL,
@@ -48,7 +55,7 @@ def start_api():
 
 def start_admin_api():
     """启动 FastAPI 管理后台 API"""
-    print("🚀 启动 FastAPI 管理后台 API (端口 8001)...")
+    print("🚀 启动 FastAPI 管理后台 API (端口 8003)...")
     p = subprocess.Popen(
         [sys.executable, "admin_backend.py"],
         stdout=subprocess.DEVNULL,
@@ -101,9 +108,9 @@ def main():
     processes = []
 
     if not args.gui_only:
-        processes.append(("API-8000", start_api()))
+        processes.append(("API-8002", start_api()))
         time.sleep(2)
-        processes.append(("AdminAPI-8001", start_admin_api()))
+        processes.append(("AdminAPI-8003", start_admin_api()))
         time.sleep(2)
 
     if not args.api_only:
@@ -117,8 +124,8 @@ def main():
     print("=" * 50)
     print(f"  C 端对话界面: http://127.0.0.1:7860")
     print(f"  B 端管理后台: http://127.0.0.1:7861")
-    print(f"  对话 API:     http://127.0.0.1:8000")
-    print(f"  管理 API:     http://127.0.0.1:8001")
+    print(f"  对话 API:     http://127.0.0.1:8002")
+    print(f"  管理 API:     http://127.0.0.1:8003")
     print()
     print("按 Ctrl+C 停止所有服务")
 

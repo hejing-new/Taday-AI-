@@ -30,7 +30,8 @@ class SearchLogRequest(BaseModel):
 def fetch_local_knowledge_context(query: str) -> str:
     """通过 HTTP 向前台主业务借答案"""
     try:
-        url = "http://127.0.0.1:8000/api/v1/chat"
+        from config import API_URL
+        url = f"{API_URL}/api/v1/chat"
         payload = {"query": f"请仅依靠内部知识库查证：{query}"}
         resp = requests.post(url, json=payload, timeout=15)
         if resp.status_code == 200:

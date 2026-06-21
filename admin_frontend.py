@@ -382,7 +382,7 @@ with gr.Blocks(title="知识库控制台", theme=gr.themes.Base()) as demo:
         outputs=[selected_case_id, selected_query, manual_correct_answer] 
     )
 
-    # 2. 提交人工答案，调用 8001 进行 DB 入库并更新 JSON
+    # 2. 提交人工答案，调用管理 API 进行 DB 入库并更新 JSON
     def handle_submit_fix(case_id, correct_ans):
         if not case_id:
             return "⚠️ 请先选中一条待处理的案列", fetch_bad_cases()

@@ -39,8 +39,8 @@ ADMIN_PASS = os.getenv("ADMIN_PASS", "Taday2026!")
 # ==========================================
 PORT_CHAT = 7860          # C 端 Gradio 对话界面
 PORT_ADMIN = 7861         # B 端 Gradio 管理后台
-PORT_API = 8000           # FastAPI 对话后端
-PORT_ADMIN_API = 8001     # FastAPI 管理后台 API
+PORT_API = 8002           # FastAPI 对话后端
+PORT_ADMIN_API = 8003     # FastAPI 管理后台 API
 
 # ==========================================
 # 📡 外部 API 地址
