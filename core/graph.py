@@ -16,21 +16,18 @@ from tools.price_tool import get_stock_price
 from tools.web_search_tool import web_search_tool
 
 # ================= 1. 初始化环境与大模型 =================
-load_dotenv()
-api_key = os.getenv("api_key")
-base_url = os.getenv("base_url", "https://api.siliconflow.cn/v1")
+from config import API_KEY, BASE_URL, CHAT_MODEL
 
 # 使用 LangChain 的标准大模型接口连接硅基流动
 llm = ChatOpenAI(
-    model="Qwen/Qwen2.5-7B-Instruct",
-    api_key=api_key,
-    base_url=base_url,
+    model=CHAT_MODEL,
+    api_key=API_KEY,
+    base_url=BASE_URL,
     temperature=0.1 # 金融场景，温度设低一点，保证严谨性
 )
 
-# 🚀 核心改动 1：把三个工具全部打包，赋予大模型超能力
-# 把 query_financial_db 加到你原有的工具池子里
-tools = [get_stock_price, analyze_catl_report, web_search_tool]
+# 🚀 四个工具打包，赋予大模型超能力
+tools = [get_stock_price, analyze_catl_report, web_search_tool, query_financial_db]
 llm_with_tools = llm.bind_tools(tools)
 
 # ================= 2. 定义状态 (State) =================
@@ -56,11 +53,13 @@ def call_model(state: AgentState):
             1. 股票行情：询问当前【实时价格、收盘价、涨跌幅】，调用 `get_stock_price`。
             2. 深度财报：询问宁德时代【具体的业务板块营收数据】、【详细财报文字细节、产能规划、战略方向等内部信息】，必须调用 `analyze_catl_report`。
             3. 全网搜索：询问【最新新闻、突发事件、宏观政策】时，调用 `web_search_tool`。
+            4. 历年数据：询问【跨年份营收/利润/毛利率对比】、【多年数据趋势】时，调用 `query_financial_db`。
             
             ⚠️【搜索关键词纪律】⚠️
-            当调用 `web_search_tool` 时：
-            1. 必须使用公司全称！例如必须搜“宁德时代”，绝对不能简写为“宁德”（否则会搜出城市旅游新闻）。
-            2. 必须加上时间定语！请结合当前时间，在关键词中加入“{current_date}”或“最新新闻”。例如生成 query: "宁德时代 2026年3月 最新新闻"。
+            当调用 `web_search_tool` 时，请像人类使用百度一样精炼关键词：
+            1. 动态判断主体：如果用户的问题明确包含或暗示了某家公司（如宁德时代），必须带上公司全称；如果用户问的是宏观行业（如新能源政策），则只搜行业关键词，绝不强塞公司名！
+            2. 动态时间定语：如果询问最新动态，请务必在搜索词中加入“{current_date}”以保证时效性。
+            3. 搜索词必须极简！例如用户问“最近出台了什么新能源政策”，你的 query 应该是："新能源政策 最新 2026年" ，而不是一整句长对话。
             
             ⚠️【输出纪律与规范】⚠️
             1. 强制中文：必须使用流畅的中文（简体）进行回复！

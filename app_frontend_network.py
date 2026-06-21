@@ -1,3 +1,15 @@
+import sys
+import os
+import io
+
+os.environ["PYTHONUTF8"] = "1"
+os.environ["PYTHONIOENCODING"] = "utf-8"
+
+if hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'buffer'):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    
 import gradio as gr
 import time
 import requests
@@ -14,7 +26,8 @@ CURRENT_SESSION_ID = f"sess_{uuid.uuid4().hex[:8]}"
 # ==========================================
 # 📡 远程后端 API 配置
 # ==========================================
-API_URL = "http://127.0.0.1:8000/api/v1/chat"
+from config import API_URL, ADMIN_API_URL, CHAT_MODEL
+from logger import logger
 
 # ==========================================
 # 🧠 修改后的 Backend 调用逻辑 (接收 s_id)
@@ -119,7 +132,7 @@ with gr.Blocks(title="Taday 智能助手") as demo:
             btn_q1 = gr.Button("💬 营收查询", size="sm")
             btn_q2 = gr.Button("💬 宁德时代2025", size="sm")
             gr.Markdown("---")
-            gr.Dropdown(choices=["Qwen/Qwen2.5-72B"], value="Qwen/Qwen2.5-72B", label="当前模型")
+            gr.Dropdown(choices=[CHAT_MODEL], value=CHAT_MODEL, label="当前模型")
 
             # 🚀 核心新增：底部后台入口
             gr.Markdown("---")
@@ -199,58 +212,25 @@ with gr.Blocks(title="Taday 智能助手") as demo:
         # ==========================================
         # 🌟 埋点第三步：强制发送请求，并加上显式打印
         # ==========================================
-        print(f"\n👉 [BI 准备发送] 提问: {clean_query[:10]}... | 耗时: {latency:.2f}s")
-        
+        logger.info(f"BI 准备发送 | 提问: {clean_query[:10]}... | 耗时: {latency:.2f}s")
+
         try:
             resp = requests.post(
-                "http://127.0.0.1:8001/api/v1/log_search", 
+                f"{ADMIN_API_URL}/log_search",
                 json={
                     "user_query": clean_query,
-                    "session_id": str(s_id), 
+                    "session_id": str(s_id),
                     "latency": round(latency, 2)
-                }, 
+                },
                 timeout=3
             )
-            print(f"✅ [BI 发送成功] 后端响应码: {resp.status_code}")
+            logger.info(f"BI 发送成功 | 后端响应码: {resp.status_code}")
         except Exception as e:
-            print(f"❌ [BI 发送失败] 报错原因: {e}")
+            logger.error(f"BI 发送失败: {e}")
 
         # 🌟 极其关键的一步：在发送完数据后，再 yield 最后一次！
         # 这样能强迫 Gradio 耐心等待上面那段 requests.post 执行完毕，绝对不会中途掐断！
         yield history, "✅ 回答完毕", source_text_final
-
-        # ==========================================
-        # 🌟 埋点第二步：大模型回答完毕，停止计时
-        # ==========================================
-        latency = time.time() - start_time
-        
-        # ==========================================
-        # 🌟 埋点第三步：清洗提问外壳并静默上报
-        # ==========================================
-        clean_query = str(user_message).strip()
-        if clean_query.startswith("[{") and clean_query.endswith("}]"):
-            try:
-                import ast
-                parsed_query = ast.literal_eval(clean_query)
-                if isinstance(parsed_query, list) and len(parsed_query) > 0 and 'text' in parsed_query[0]:
-                    clean_query = parsed_query[0]['text']
-            except:
-                pass
-
-        try:
-            # 异步上报给 8001 的大盘接口，这里使用独立传入的 s_id
-            requests.post(
-                "http://127.0.0.1:8001/api/v1/log_search", 
-                json={
-                    "user_query": clean_query,
-                    "session_id": s_id, 
-                    "latency": round(latency, 2)
-                }, 
-                timeout=2 # 极短超时，防阻塞
-            )
-            print(f"📊 [BI埋点] 上报成功! Session: {s_id[:8]}... | 耗时: {latency:.2f}s")
-        except Exception as e:
-            print(f"⚠️ [BI埋点] 上报失败 (后端可能未启动): {e}")
 
     # 事件绑定记得加上 session_id_state
     msg.submit(user_action, [msg, chatbot], [msg, chatbot], queue=False).then(
@@ -293,7 +273,7 @@ with gr.Blocks(title="Taday 智能助手") as demo:
     # ==========================================
     # 🌟 注意这里多了一个参数 downvoted_set
     def handle_vote(vote: gr.LikeData, current_history, downvoted_set):
-        print(f"\n[🔍 诊断] 捕捉到点踩/点赞动作！开始精准提取...")
+        logger.info("捕捉到点踩/点赞动作，开始精准提取")
         
         # 1. 深度清洗 AI 回答的外壳
         clean_val = str(vote.value).strip()
@@ -318,7 +298,7 @@ with gr.Blocks(title="Taday 智能助手") as demo:
                     elif isinstance(prev_msg, (list, tuple)):
                         user_query_text = prev_msg[0]
         except Exception as e:
-            print(f"[⚠️ 索引提取异常] {e}")
+            logger.warning(f"索引提取异常: {e}")
 
         # 3. 强力清洗多模态外壳
         user_query_str = str(user_query_text).strip()
@@ -354,7 +334,7 @@ with gr.Blocks(title="Taday 智能助手") as demo:
                     gr.Info("🔄 已撤销点踩反馈！")
                     downvoted_set.remove(qa_key) # 从备忘录里划掉
                 except Exception as e:
-                    print(f"[❌ 撤销异常] {e}")
+                    logger.error(f"撤销点踩异常: {e}")
             else:
                 # 情况 B：备忘录里没有它，说明这是第一次正常的点踩 👎！代表【写入】！
                 try:
@@ -363,7 +343,7 @@ with gr.Blocks(title="Taday 智能助手") as demo:
                         gr.Info("👎 反馈已同步至高管质检草稿箱！")
                         downvoted_set.add(qa_key) # 记入备忘录
                 except Exception as e:
-                    print(f"[❌ 发送异常] {e}")
+                    logger.error(f"发送反馈异常: {e}")
 
         # 返回更新后的备忘录给前端 State 保存
         return downvoted_set

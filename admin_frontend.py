@@ -1,12 +1,12 @@
+
 import gradio as gr
 import requests
 import pandas as pd
 import time
+from config import ADMIN_API_URL, ADMIN_USER, ADMIN_PASS
+from logger import logger
 
-# ==========================================
-# 📡 后端 API 配置 (指向你刚启动的 8001 端口)
-# ==========================================
-ADMIN_API_URL = "http://127.0.0.1:8001/admin/api"
+ADMIN_AUTH = (ADMIN_USER, ADMIN_PASS)
 
 # 状态字典映射
 STATUS_MAP = {
@@ -23,7 +23,7 @@ STATUS_MAP = {
 def fetch_dashboard():
     """拉取全局文档看板数据"""
     try:
-        resp = requests.get(f"{ADMIN_API_URL}/docs", timeout=10)
+        resp = requests.get(f"{ADMIN_API_URL}/docs", timeout=10, auth=ADMIN_AUTH)
         if resp.status_code == 200:
             docs = resp.json()
             table_data = []
@@ -40,7 +40,7 @@ def fetch_dashboard():
             return df
         return pd.DataFrame()
     except Exception as e:
-        print(f"看板获取失败: {e}")
+        logger.error(f"看板获取失败: {e}")
         return pd.DataFrame()
 
 def handle_upload(file):
@@ -51,7 +51,7 @@ def handle_upload(file):
     try:
         with open(file.name, "rb") as f:
             files = {"file": (file.name.split("/")[-1], f, "application/pdf")}
-            resp = requests.post(f"{ADMIN_API_URL}/upload", files=files, timeout=60)
+            resp = requests.post(f"{ADMIN_API_URL}/upload", files=files, timeout=60, auth=ADMIN_AUTH)
             
         if resp.status_code == 200:
             msg = resp.json()["message"]
@@ -72,7 +72,7 @@ def on_select_doc(evt: gr.SelectData, df: pd.DataFrame):
         return doc_id, f"⚠️ 《{filename}》正在后台切片中，请稍后再试或点击刷新。", pd.DataFrame(), [], ""
     
     try:
-        resp = requests.get(f"{ADMIN_API_URL}/docs/{doc_id}/chunks")
+        resp = requests.get(f"{ADMIN_API_URL}/docs/{doc_id}/chunks", auth=ADMIN_AUTH)
         if resp.status_code == 200:
             chunks = resp.json()
             table_data = []
@@ -93,23 +93,38 @@ def on_select_chunk(evt: gr.SelectData, df: pd.DataFrame):
     full_text = df.iloc[row_index]["完整内容"]
     return chunk_id, full_text
 
+def _refresh_chunks(doc_id):
+    """重新拉取文档切片列表，返回 (chunk_df, raw_chunks)"""
+    try:
+        resp = requests.get(f"{ADMIN_API_URL}/docs/{doc_id}/chunks", auth=ADMIN_AUTH)
+        if resp.status_code == 200:
+            chunks = resp.json()
+            table_data = []
+            for c in chunks:
+                preview = c['text_content'][:40].replace("\n", "") + "..."
+                s_icon = "🟢 正常" if c['status'] == "active" else "🔴 废弃"
+                table_data.append([c['chunk_index'], c['chunk_id'], s_icon, preview, c['text_content']])
+            chunk_df = pd.DataFrame(table_data, columns=["序号", "切片ID", "状态", "内容预览", "完整内容"])
+            return chunk_df, chunks
+    except Exception as e:
+        logger.error(f"刷新切片列表失败: {e}")
+    return pd.DataFrame(), []
+
 def save_chunk(chunk_id, new_text, doc_id):
     if not chunk_id: return "⚠️ 未选中切片", pd.DataFrame(), []
-    requests.put(f"{ADMIN_API_URL}/chunks/{chunk_id}", json={"new_text": new_text})
-    
-    _, _, chunk_df, raw_chunks, _ = on_select_doc(gr.SelectData(target=None, index=[0,0], value=None), pd.DataFrame([{"文档ID": doc_id, "当前状态": "审核", "文档名称": ""}]))
+    requests.put(f"{ADMIN_API_URL}/chunks/{chunk_id}", json={"new_text": new_text}, auth=ADMIN_AUTH)
+    chunk_df, raw_chunks = _refresh_chunks(doc_id)
     return f"✅ 切片 {chunk_id} 已保存", chunk_df, raw_chunks
 
 def delete_chunk(chunk_id, doc_id):
     if not chunk_id: return "⚠️ 未选中切片", pd.DataFrame(), []
-    requests.delete(f"{ADMIN_API_URL}/chunks/{chunk_id}")
-    
-    _, _, chunk_df, raw_chunks, _ = on_select_doc(gr.SelectData(target=None, index=[0,0], value=None), pd.DataFrame([{"文档ID": doc_id, "当前状态": "审核", "文档名称": ""}]))
+    requests.delete(f"{ADMIN_API_URL}/chunks/{chunk_id}", auth=ADMIN_AUTH)
+    chunk_df, raw_chunks = _refresh_chunks(doc_id)
     return f"🗑️ 切片 {chunk_id} 已废弃", chunk_df, raw_chunks
 
 def publish_doc(doc_id):
     if not doc_id: return "⚠️ 请先在上方看板选中一个待审核的文档！", fetch_dashboard()
-    resp = requests.post(f"{ADMIN_API_URL}/docs/{doc_id}/publish")
+    resp = requests.post(f"{ADMIN_API_URL}/docs/{doc_id}/publish", auth=ADMIN_AUTH)
     if resp.status_code == 200:
         return f"🚀 {resp.json()['message']}", fetch_dashboard()
     return f"❌ 发布失败: {resp.text}", fetch_dashboard()
@@ -117,7 +132,7 @@ def publish_doc(doc_id):
 def fetch_bad_cases():
     """获取用户点踩的 Bad Case 列表"""
     try:
-        resp = requests.get(f"{ADMIN_API_URL}/bad_cases", timeout=10)
+        resp = requests.get(f"{ADMIN_API_URL}/bad_cases", timeout=10, auth=ADMIN_AUTH)
         if resp.status_code == 200:
             cases = resp.json()
             table_data = []
@@ -149,31 +164,31 @@ def fetch_bad_cases():
             return pd.DataFrame(table_data, columns=["案例ID", "处理状态", "用户提问", "AI 翻车回答", "处理结果/修复答案", "发生时间"])
     except Exception as e:
         # 🌟 核心修复 3：拒绝静默崩溃！把错误打在终端里！
-        print(f"❌ 拉取草稿箱数据失败: {e}")
+        logger.error(f"拉取草稿箱数据失败: {e}")
         
     return pd.DataFrame(columns=["案例ID", "处理状态", "用户提问", "AI 翻车回答", "处理结果/修复答案", "发生时间"])
 
 def fetch_analytics():
     """获取 BI 大盘数据"""
     try:
-        resp = requests.get(f"{ADMIN_API_URL}/analytics", timeout=10)
+        resp = requests.get(f"{ADMIN_API_URL}/analytics", timeout=10, auth=ADMIN_AUTH)
         if resp.status_code == 200:
             data = resp.json()
             metrics = data["metrics"]
             logs = data["logs"]
-            
+
             # 构建顶部核心指标文本
             metrics_md = (
                 f"### 📈 全站总提问次数: **{metrics['total_searches']}** 次 | "
                 f"⏱️ 模型平均响应延迟: **{metrics['avg_latency']}** 秒"
             )
-            
+
             # 构建表格数据
             table_data = [[l['time'], l['session'], l['query'], f"{l['latency']}s"] for l in logs]
             df = pd.DataFrame(table_data, columns=["搜索时间", "独立访客 ID (Session)", "用户提问内容", "响应耗时"])
             return metrics_md, df
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"拉取 BI 大盘数据失败: {e}")
     return "### ⚠️ 数据大盘拉取失败", pd.DataFrame()
 
 # ==========================================
@@ -376,8 +391,9 @@ with gr.Blocks(title="知识库控制台", theme=gr.themes.Base()) as demo:
             
         try:
             resp = requests.post(
-                f"{ADMIN_API_URL}/bad_cases/{case_id}/fix", 
-                json={"correct_answer": correct_ans}
+                f"{ADMIN_API_URL}/bad_cases/{case_id}/fix",
+                json={"correct_answer": correct_ans},
+                auth=ADMIN_AUTH
             )
             if resp.status_code == 200:
                 return f"✅ {resp.json()['message']}", fetch_bad_cases()
@@ -413,7 +429,7 @@ with gr.Blocks(title="知识库控制台", theme=gr.themes.Base()) as demo:
             progress(0.4, desc="🧠 大模型正在疯狂阅读报错日志与底层数据...")
             
             # 🌟 核心修复：把 timeout 从 60 改成 300（5分钟），给足大模型批量思考的时间！
-            resp = requests.post(f"{ADMIN_API_URL}/bad_cases/auto_heal", timeout=300)
+            resp = requests.post(f"{ADMIN_API_URL}/bad_cases/auto_heal", timeout=300, auth=ADMIN_AUTH)
             
             progress(0.9, desc="💾 正在进行物理隔离与数据写入...")
 
@@ -441,12 +457,15 @@ with gr.Blocks(title="知识库控制台", theme=gr.themes.Base()) as demo:
     def handle_ignore(case_id):
         if not case_id: return "⚠️ 请先选中案例", fetch_bad_cases()
         # 调一个后端接口把它标为废弃 (后端只需写一个很简单的接口更新 status 即可)
-        requests.post(f"{ADMIN_API_URL}/bad_cases/{case_id}/ignore")
+        requests.post(f"{ADMIN_API_URL}/bad_cases/{case_id}/ignore", auth=ADMIN_AUTH)
         return "🗑️ 已将该误报移入废弃站", fetch_bad_cases()
 
     ignore_btn.click(handle_ignore, inputs=[selected_case_id], outputs=[bc_action_log, bad_case_table])
 
 if __name__ == "__main__":
-    print("🚀 知识库看板系统启动！带 Basic Auth 安全防护。")
-    # 预设管理员账号：admin / Taday2026!
-    demo.launch(server_name="127.0.0.1", server_port=7861, auth=("admin", "Taday2026!"))
+    logger.info("知识库看板系统启动，端口 7861")
+    # 从环境变量读取管理员账号密码，默认值仅用于开发调试
+    import os
+    admin_user = os.getenv("ADMIN_USER", "admin")
+    admin_pass = os.getenv("ADMIN_PASS", "Taday2026!")
+    demo.launch(server_name="127.0.0.1", server_port=7861, auth=(admin_user, admin_pass))

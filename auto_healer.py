@@ -26,9 +26,11 @@ def classify_error_type(query: str, error_ans: str) -> str:
     # 模拟 LLM 调用，你需要替换为真实的 llm.invoke(prompt).content
     # response = llm.invoke(prompt).content.strip().upper()
     
-    # 这里为了让你直接跑通，做一个简单的规则模拟（真实情况请用大模型）
-    if "新闻" in query or "今天" in query or "股价" in query:
-        return "DYNAMIC"
+    # 简单的规则模拟（真实情况请用大模型）
+    DYNAMIC_KEYWORDS = ["新闻", "今天", "股价", "最新", "当前", "实时", "热点", "动态", "资讯"]
+    for kw in DYNAMIC_KEYWORDS:
+        if kw in query:
+            return "DYNAMIC"
     return "STATIC"
 
 def heal_static_knowledge(query: str) -> str:
