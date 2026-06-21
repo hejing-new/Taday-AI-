@@ -1,13 +1,35 @@
 import sys
 import os
 import uvicorn
-from fastapi import FastAPI, HTTPException
+import secrets
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from fastapi import UploadFile, File
 from llama_index.core import Document, SummaryIndex
 from llama_index.readers.file import PyMuPDFReader
 import shutil
+
+from config import (
+    ADMIN_USER, ADMIN_PASS, ALLOWED_CONTENT_TYPES, MAX_FILE_SIZE,
+    TEMP_STORAGE_PATH
+)
+
+# ================= 安全认证配置 =================
+security = HTTPBasic()
+
+def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
+    """验证管理员身份"""
+    is_user_correct = secrets.compare_digest(credentials.username, ADMIN_USER)
+    is_pass_correct = secrets.compare_digest(credentials.password, ADMIN_PASS)
+    if not (is_user_correct and is_pass_correct):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未授权访问：管理员凭据无效",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
 
 # 🚀 全局内存存储：存放每个 Session 的临时查询引擎
 temp_engines = {}
@@ -45,26 +67,42 @@ class ChatResponse(BaseModel):
 # ==========================================
 # 3. 核心业务接口定义 (路由)
 # ==========================================
-# 1. 新增：临时文档上传接口
+# 上传文件限制：仅允许 PDF，最大 50MB
+ALLOWED_CONTENT_TYPES = ["application/pdf"]
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+# 1. 新增：临时文档上传接口（需认证）
 @app.post("/api/v1/upload_temp")
-async def upload_temp_document(session_id: str, file: UploadFile = File(...)):
+async def upload_temp_document(session_id: str, file: UploadFile = File(...), username: str = Depends(verify_admin)):
+    # 文件类型校验
+    if file.content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {file.content_type}，仅允许 PDF")
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="文件扩展名必须为 .pdf")
+
     try:
-        # 1. 保存临时文件
-        temp_dir = f"./temp_storage/{session_id}"
+        # 1. 保存临时文件（先读入内存检查大小）
+        content = await file.read()
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail=f"文件过大（{len(content)//1024//1024}MB），最大允许 50MB")
+
+        temp_dir = os.path.join(TEMP_STORAGE_PATH, session_id)
         os.makedirs(temp_dir, exist_ok=True)
         file_path = os.path.join(temp_dir, file.filename)
         with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            buffer.write(content)
 
         # 2. 解析 PDF 并构建内存索引 (SummaryIndex 适合单文档快速检索)
         loader = PyMuPDFReader()
         documents = loader.load_data(file_path=file_path)
-        
+
         # 构建一个临时的内存引擎
         index = SummaryIndex.from_documents(documents)
         temp_engines[session_id] = index.as_query_engine()
 
         return {"status": "success", "message": f"文档 {file.filename} 已挂载至会话 {session_id}"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
