@@ -19,6 +19,7 @@ if hasattr(sys.stderr, 'buffer'):
 from langchain_core.tools import tool
 from tavily import TavilyClient
 from dotenv import load_dotenv
+from logger import logger
 
 # 加载环境变量
 load_dotenv()
@@ -28,7 +29,7 @@ def web_search_tool(query: str) -> str:
     """
     当用户询问最新新闻、突发事件、宏观政策等实时全网信息时调用。
     """
-    print(f"\n[🌐 Tavily Search] 大脑生成的实际搜索词是: >>> '{query}' <<<")
+    logger.info(f"Tavily Search: 搜索词='{query}'")
     
     try:
         # 每次调用动态获取 Key，防呆设计
@@ -45,7 +46,7 @@ def web_search_tool(query: str) -> str:
             query=query,
             search_depth="advanced",
             max_results=3,
-            include_answer=False # 我们不需要 Tavily 自己总结，我们只要原始语料喂给 Qwen
+            include_answer=True  # 保留 Tavily 摘要，为 LLM 提供更多上下文
         )
 
         results = response.get("results", [])
@@ -72,16 +73,22 @@ def web_search_tool(query: str) -> str:
             clean_content = clean_content.replace('\n', ' ').strip()
             
             # 🚀 3. 重新组装：使用粗体代替标题，链接放在最后
+            # 取前1000字，为 LLM 提供足够上下文
             result_str = (
                 f"**🔗 来源 {i+1}: [{clean_title}]({url})**\n\n"
-                f"{clean_content[:200]}... " # 只取前200字，防止撑爆侧边栏
+                f"{clean_content[:1000]}\n"
                 f"[阅读全文]({url})\n"
             )
             formatted_results.append(result_str)
 
         # 最终输出，顶部标题也稍微控制一下字号
         final_output = "#### 🌐 Tavily 实时情报库\n\n" + "\n---\n".join(formatted_results)
-        
+
+        # 如果有 Tavily 摘要答案，附加在末尾
+        tavily_answer = response.get("answer", "")
+        if tavily_answer:
+            final_output += f"\n\n**📋 Tavily 摘要:** {tavily_answer}"
+
         return final_output
 
     except Exception as e:

@@ -1,114 +1,57 @@
 import sys
 import os
-import io
 
 os.environ["PYTHONUTF8"] = "1"
 os.environ["PYTHONIOENCODING"] = "utf-8"
 
-if hasattr(sys.stdout, 'buffer'):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-if hasattr(sys.stderr, 'buffer'):
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
-    
 import gradio as gr
 import time
 import requests
 import json
-import uuid # 用于生成唯一会话ID
-import os
-# 引入你刚刚写好的终极大图
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
-from core.graph import app_graph
-# 在文件顶部，给每个打开页面的用户生成一个独立的 Session ID
-# 这样 BI 大盘就能区分这是同一个用户在连问，还是不同用户
+import uuid
+
+# ReAct engine (replaces LangGraph)
+from core.react_engine import run_react
+
 CURRENT_SESSION_ID = f"sess_{uuid.uuid4().hex[:8]}"
 
-# ==========================================
-# 📡 远程后端 API 配置
-# ==========================================
 from config import API_URL, ADMIN_API_URL, CHAT_MODEL
 from logger import logger
 
-# ==========================================
-# 🧠 修改后的 Backend 调用逻辑 (接收 s_id)
-# ==========================================
+
 def real_rag_backend(user_message, history, s_id):
-    """直接调用本地的 LangGraph 智能体，展示思考过程与真实溯源数据"""
-    yield "", "📡 Taday 金融大脑正在思考策略并调度工具...", ""
+    """Call ReAct engine: Reason -> Act -> Observe loop"""
+    yield "", "Taday Brain is thinking...", ""
 
     query_str = user_message[0].get("text", str(user_message)) if isinstance(user_message, list) else str(user_message)
 
     try:
-        # 🌟 终极防御：在最前面提前初始化所有局部变量，绝不给报错留机会！
-        source_cards = ""
-        evidence_log = ""
-        thinking_log = "### 🧠 Taday 大脑思考与调度过程：\n\n"
+        thinking_log = "### Taday Brain Reasoning Process:\n\n"
         final_answer = ""
-        called_tools = set()
+        source_cards = ""
 
-        # 1. 构造历史记录
-        messages_to_pass = []
+        # Convert history to simple dict list
+        history_msgs = []
         for msg in history:
-            if msg["role"] == "user":
-                messages_to_pass.append(HumanMessage(content=msg["content"]))
-            elif msg["role"] == "assistant":
-                messages_to_pass.append(AIMessage(content=msg["content"]))
-        
-        messages_to_pass.append(HumanMessage(content=query_str))
-        initial_state = {"messages": messages_to_pass}
-        
-        yield thinking_log, "🔄 智能体正在启动...", source_cards
+            history_msgs.append({"role": msg["role"], "content": msg["content"]})
 
-        # 2. 流式监听 LangGraph 执行状态（传入 thread_id 实现会话记忆）
-        config = {"configurable": {"thread_id": s_id}}
-        for output in app_graph.stream(initial_state, config=config):
-            for node_name, node_state in output.items():
-                
-                if node_name == "agent":
-                    last_msg = node_state["messages"][-1]
-                    if hasattr(last_msg, 'tool_calls') and last_msg.tool_calls:
-                        tool_names = [t['name'] for t in last_msg.tool_calls]
-                        called_tools.update(tool_names)
-                        thinking_log += f"⏳ **路由中枢**：决定派发任务给工具 `{', '.join(tool_names)}`，等待工具返回数据...\n\n"
-                        yield thinking_log, f"调度工具: {', '.join(tool_names)}", evidence_log or "等待抓取底层数据..."
-                    else:
-                        thinking_log += f"💡 **大脑**：所有数据收集完毕，正在撰写最终研报。\n\n"
-                        yield thinking_log, "✅ 正在生成回答...", evidence_log or "未调用外部数据"
-                        final_answer = last_msg.content
+        for answer, status, sources in run_react(query_str, thread_id=s_id, history_messages=history_msgs):
+            if answer:
+                final_answer = answer
+            if sources:
+                source_cards = sources
+            logger.info(f"[DEBUG real_rag_backend] yield: status={status[:40]}, source_cards_len={len(source_cards)}, answer_len={len(answer)}")
+            yield thinking_log, status, source_cards
 
-                elif node_name == "tools":
-                    thinking_log += f"✅ **工具执行完毕**：已成功获取底层数据，交还给大脑进行二次分析...\n\n"
-                    
-                    for msg in reversed(node_state["messages"]):
-                        if isinstance(msg, ToolMessage):
-                            tool_name = msg.name
-                            tool_content = msg.content
-                            preview_length = 800
-                            content_preview = tool_content[:preview_length] + ("\n...[内容已截断]" if len(tool_content) > preview_length else "")
-                            
-                            evidence_log += f"#### 🟢 工具溯源：`{tool_name}`\n"
-                            evidence_log += f"> {content_preview.replace(chr(10), chr(10)+'> ')}\n\n---\n"
-                        else:
-                            break
-                    
-                    yield thinking_log, "数据抓取完成...", evidence_log
+        if not final_answer:
+            final_answer = "Sorry, unable to generate an answer. Please try again."
 
-        # 3. 组装最终答案与右侧溯源面板
-        if evidence_log:
-            source_cards = evidence_log
-        else:
-            source_cards = "> ⚪ 纯大模型记忆生成，未调用知识库或外网。\n"
-
-        partial_text = ""
-        for char in final_answer:
-            partial_text += char
-            time.sleep(0.01)
-            yield partial_text, "⏳ 正在渲染深度研报...", source_cards
-            
-        yield partial_text, "✅ 回答完毕", source_cards
+        logger.info(f"[DEBUG real_rag_backend] FINAL yield: source_cards_len={len(source_cards)}, source_cards_preview={source_cards[:150]}")
+        yield final_answer, "Done", source_cards
 
     except Exception as e:
-        yield f"❌ 智能体运行异常: {str(e)}", "⚠️ 访问异常", ""
+        logger.error(f"ReAct engine error: {e}")
+        yield f"Error: {str(e)}", "Error", ""
         
 # ==========================================
 # 🎨 前端 UI 布局
@@ -144,7 +87,7 @@ with gr.Blocks(title="Taday 智能助手") as demo:
         
         # ---------------- 2. 中间栏 ----------------
         with gr.Column(scale=3):
-            chatbot = gr.Chatbot(height=550, label="智能对话区") # 保持不传 type="messages"
+            # chatbot 已在"对话历史恢复"区块定义，支持自动恢复
             with gr.Row():
                 thinking_status = gr.Markdown("*💡 等待提问...*")
                 toggle_btn = gr.Button("⬅️ 展开溯源面板", size="sm", scale=0)
@@ -155,7 +98,37 @@ with gr.Blocks(title="Taday 智能助手") as demo:
         # ---------------- 3. 右侧栏 (默认隐藏) ----------------
         with gr.Column(scale=2, visible=False) as right_column:
             gr.Markdown("### 🔍 数据溯源阅读器")
-            source_panel = gr.Markdown("> 待检索...", elem_id="source_panel")
+            source_panel = gr.Markdown(value="> 待检索...", elem_id="source_panel")
+
+    # ==========================================
+    # 对话历史恢复
+    # ==========================================
+    def restore_history(s_id):
+        """页面加载时从后端恢复对话历史"""
+        try:
+            resp = requests.get(f"{API_URL}/api/v1/history/{s_id}", timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                history = data.get("messages", [])
+                # 转换为 Gradio Chatbot 格式: [{"role": "user", "content": "..."}, ...]
+                return history
+        except Exception as e:
+            logger.warning(f"恢复历史失败: {e}")
+        return []
+
+    def clear_and_new_session(s_id):
+        """清空当前会话并创建新的"""
+        try:
+            requests.delete(f"{API_URL}/api/v1/history/{s_id}", timeout=5)
+        except Exception as e:
+            logger.warning(f"清空历史失败: {e}")
+        return [], "*💡 等待提问...*", "待检索..."
+
+    # 页面加载时恢复历史
+    chatbot = gr.Chatbot(
+        height=550, label="智能对话区",
+        value=lambda: restore_history(CURRENT_SESSION_ID),
+    )
 
     # ==========================================
     # 交互逻辑：文件上传处理
@@ -167,7 +140,7 @@ with gr.Blocks(title="Taday 智能助手") as demo:
             with open(file.name, "rb") as f:
                 files = {"file": (os.path.basename(file.name), f, "application/pdf")}
                 # 🚀 使用传入的独立 s_id
-                resp = requests.post(f"{API_URL}/api/v1/upload_temp?session_id={s_id}", files=files)
+                resp = requests.post(f"{API_URL}/api/v1/upload_temp?session_id={s_id}", files=files, timeout=60)
             return f"✅ 已挂载: {os.path.basename(file.name)}"
         except Exception as e:
             return f"❌ 错误: {str(e)}"
@@ -184,16 +157,17 @@ with gr.Blocks(title="Taday 智能助手") as demo:
     def bot_action(history, s_id):
         user_message = history[-1]["content"]
         history.append({"role": "assistant", "content": ""})
-        
+
         # 🌟 埋点第一步：掐表计时
         start_time = time.time()
-        
+
         # 流式返回大模型的思考与结果
         source_text_final = ""
         for partial_text, status_text, source_text in real_rag_backend(user_message, history[:-2], s_id):
             history[-1]["content"] = partial_text
-            source_text_final = source_text # 记录最后一次的溯源数据
-            yield history, f"*💡 {status_text}*", source_text
+            if source_text:
+                source_text_final = source_text
+            yield history, f"*💡 {status_text}*", source_text_final
 
         # ==========================================
         # 🌟 埋点第二步：大模型回答完毕，停止计时
@@ -231,6 +205,7 @@ with gr.Blocks(title="Taday 智能助手") as demo:
 
         # 🌟 极其关键的一步：在发送完数据后，再 yield 最后一次！
         # 这样能强迫 Gradio 耐心等待上面那段 requests.post 执行完毕，绝对不会中途掐断！
+        logger.info(f"[DEBUG bot_action] FINAL yield: source_text_final length={len(source_text_final)}")
         yield history, "✅ 回答完毕", source_text_final
 
     # 事件绑定记得加上 session_id_state
@@ -253,8 +228,12 @@ with gr.Blocks(title="Taday 智能助手") as demo:
     btn_q1.click(lambda: "宁德时代2025年动力电池系统的营业收入是多少？", None, msg)
     btn_q2.click(lambda: "总结一下宁德时代2025年的发展趋势", None, msg)
 
-    # 🚀 修正 4：清空时返回空列表 []
-    new_chat_btn.click(lambda: ([], "*💡 等待提问...*", "待检索..."), None, [chatbot, thinking_status, source_panel])
+    # 清空时同步删除后端历史，并创建新会话
+    new_chat_btn.click(
+        lambda s_id: clear_and_new_session(s_id),
+        inputs=[session_id_state],
+        outputs=[chatbot, thinking_status, source_panel],
+    )
 
     # ==========================================
     # 🚀 修改：生成带安全提示的后台跳转链接
@@ -285,19 +264,23 @@ with gr.Blocks(title="Taday 智能助手") as demo:
         else:
             ai_response_text = clean_val
 
-        # 2. 提取原问题
+        # 2. 提取原问题（反向遍历找最后一条 user 消息，更可靠）
         user_query_text = "【系统异常】前端上下文提取失败"
         try:
             if hasattr(vote, 'index') and vote.index is not None:
                 idx = vote.index[0] if isinstance(vote.index, (list, tuple)) else vote.index
-                if idx > 0:
-                    prev_msg = current_history[idx - 1]
-                    if hasattr(prev_msg, 'content'):
-                        user_query_text = prev_msg.content
-                    elif isinstance(prev_msg, dict):
-                        user_query_text = prev_msg.get("content", "")
-                    elif isinstance(prev_msg, (list, tuple)):
-                        user_query_text = prev_msg[0]
+                # 从 idx 往前找最后一条 role=user 的消息
+                for i in range(idx - 1, -1, -1):
+                    msg = current_history[i]
+                    role = msg.get("role", "") if isinstance(msg, dict) else getattr(msg, "role", "")
+                    if role == "user":
+                        if isinstance(msg, dict):
+                            user_query_text = msg.get("content", "")
+                        elif hasattr(msg, 'content'):
+                            user_query_text = msg.content
+                        elif isinstance(msg, (list, tuple)):
+                            user_query_text = msg[0]
+                        break
         except Exception as e:
             logger.warning(f"索引提取异常: {e}")
 

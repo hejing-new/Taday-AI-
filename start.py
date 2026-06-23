@@ -125,7 +125,7 @@ def main():
     print(f"  C 端对话界面: http://127.0.0.1:7860")
     print(f"  B 端管理后台: http://127.0.0.1:7861")
     print(f"  对话 API:     http://127.0.0.1:8002")
-    print(f"  管理 API:     http://127.0.0.1:8003")
+    print(f"  管理 API:     http://127.0.0.1:8004")
     print()
     print("按 Ctrl+C 停止所有服务")
 

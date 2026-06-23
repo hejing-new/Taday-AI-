@@ -10,12 +10,14 @@ from pydantic import BaseModel
 from typing import List
 from config import DB_FILE
 from logger import logger
+from utils.json_store import (
+    ensure_json_files, load_json, save_json,
+    load_bad_cases, save_bad_cases,
+    JSON_LOG_FILE, DYNAMIC_JSON_FILE,
+)
 
 router = APIRouter()
 
-# 文件路径
-JSON_LOG_FILE = "bad_cases_staging.json"
-DYNAMIC_JSON_FILE = "dynamic_cases_archive.json"
 
 # 数据模型
 class FeedbackRequest(BaseModel):
@@ -26,16 +28,6 @@ class CorrectionRequest(BaseModel):
     correct_answer: str
 
 
-def _ensure_json_files():
-    """确保 JSON 文件存在"""
-    if not os.path.exists(JSON_LOG_FILE):
-        with open(JSON_LOG_FILE, 'w', encoding='utf-8') as f:
-            json.dump([], f)
-    if not os.path.exists(DYNAMIC_JSON_FILE):
-        with open(DYNAMIC_JSON_FILE, 'w', encoding='utf-8') as f:
-            json.dump([], f)
-
-
 # ==========================================
 # C 端接口（无需认证）
 # ==========================================
@@ -43,7 +35,7 @@ def _ensure_json_files():
 @router.post("/api/v1/feedback", summary="C端：记录 Bad Case 到 JSON 暂存区")
 def add_feedback_to_json(req: FeedbackRequest):
     try:
-        _ensure_json_files()
+        ensure_json_files()
         case_id = f"bc_{uuid.uuid4().hex[:8]}"
         new_case = {
             "case_id": case_id,
@@ -53,16 +45,7 @@ def add_feedback_to_json(req: FeedbackRequest):
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
 
-        cases = []
-        if os.path.exists(JSON_LOG_FILE):
-            try:
-                with open(JSON_LOG_FILE, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    if content.strip():
-                        cases = json.loads(content)
-            except Exception as e:
-                logger.warning(f"JSON 恢复失败: {e}")
-                cases = []
+        cases = load_bad_cases()
 
         # 幂等性去重
         for existing_case in cases:
@@ -73,9 +56,7 @@ def add_feedback_to_json(req: FeedbackRequest):
                 return {"status": "success", "message": "already_exists", "case_id": existing_case.get('case_id')}
 
         cases.append(new_case)
-
-        with open(JSON_LOG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(cases, f, ensure_ascii=False, indent=2)
+        save_bad_cases(cases)
 
         return {"status": "success", "case_id": case_id}
 
@@ -87,11 +68,7 @@ def add_feedback_to_json(req: FeedbackRequest):
 @router.post("/api/v1/feedback/cancel", summary="C端：撤销点踩，从 JSON 移除记录")
 def cancel_feedback_in_json(req: FeedbackRequest):
     try:
-        if not os.path.exists(JSON_LOG_FILE):
-            return {"status": "success"}
-
-        with open(JSON_LOG_FILE, 'r', encoding='utf-8') as f:
-            cases = json.load(f)
+        cases = load_bad_cases()
 
         new_cases = [
             c for c in cases
@@ -100,9 +77,7 @@ def cancel_feedback_in_json(req: FeedbackRequest):
                     c.get('status') == 'pending')
         ]
 
-        with open(JSON_LOG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(new_cases, f, ensure_ascii=False, indent=2)
-
+        save_bad_cases(new_cases)
         return {"status": "success", "message": "已从待处理列表中移除"}
     except Exception as e:
         logger.error(f"撤销点踩失败: {e}")
@@ -115,17 +90,9 @@ def cancel_feedback_in_json(req: FeedbackRequest):
 
 @router.get("/admin/api/bad_cases", summary="B端：读取 JSON 暂存数据")
 def get_cases_from_json():
-    if not os.path.exists(JSON_LOG_FILE):
-        return []
-
     try:
-        with open(JSON_LOG_FILE, 'r', encoding='utf-8') as f:
-            content = f.read()
-            if not content.strip():
-                return []
-            cases = json.loads(content)
+        cases = load_bad_cases()
         return sorted(cases, key=lambda x: x.get('created_at', ''), reverse=True)
-
     except Exception as e:
         logger.error(f"读取草稿箱失败: {e}")
         return []
@@ -133,8 +100,7 @@ def get_cases_from_json():
 
 @router.post("/admin/api/bad_cases/{case_id}/fix", summary="B端：人工质检完毕，入库并更新状态")
 def fix_bad_case(case_id: str, req: CorrectionRequest):
-    with open(JSON_LOG_FILE, 'r', encoding='utf-8') as f:
-        cases = json.load(f)
+    cases = load_bad_cases()
 
     target_case = None
     for c in cases:
@@ -146,8 +112,7 @@ def fix_bad_case(case_id: str, req: CorrectionRequest):
     if not target_case:
         return {"status": "error", "message": "未找到该案列"}
 
-    with open(JSON_LOG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(cases, f, ensure_ascii=False, indent=2)
+    save_bad_cases(cases)
 
     # 写入黄金答案库
     import sqlite3

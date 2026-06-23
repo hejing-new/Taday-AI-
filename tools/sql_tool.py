@@ -27,22 +27,38 @@ SCHEMA_INFO = """
 _SELECT_PATTERN = re.compile(r'^\s*SELECT\b', re.IGNORECASE)
 # 禁止的危险关键词
 _FORBIDDEN_KEYWORDS = ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'ALTER', 'CREATE', 'EXEC', 'UNION']
+# 允许多语句（分号注入防御）
+_SEMICOLON_PATTERN = re.compile(r';')
+
+
+_llm_instance = None
 
 
 def _get_llm():
-    """延迟导入 llm，避免循环依赖"""
-    from langchain_openai import ChatOpenAI
-    return ChatOpenAI(
-        model=CHAT_MODEL,
-        api_key=API_KEY,
-        base_url="https://api.siliconflow.cn/v1",
-        temperature=0.1
-    )
+    """获取全局 LLM 单例，首次调用时创建，后续复用"""
+    global _llm_instance
+    if _llm_instance is None:
+        from langchain_openai import ChatOpenAI
+        _llm_instance = ChatOpenAI(
+            model=CHAT_MODEL,
+            api_key=API_KEY,
+            base_url="https://api.siliconflow.cn/v1",
+            temperature=0.1
+        )
+    return _llm_instance
 
 
 def _validate_sql(sql: str) -> bool:
-    """校验 SQL 语句安全性：只允许 SELECT，禁止危险关键词"""
+    """
+    校验 SQL 语句安全性：
+    1. 只允许以 SELECT 开头
+    2. 禁止危险关键词（DROP/DELETE/INSERT 等）
+    3. 禁止多语句（分号注入）
+    """
     if not _SELECT_PATTERN.match(sql):
+        return False
+    # 防御多语句注入：不允许分号
+    if _SEMICOLON_PATTERN.search(sql):
         return False
     upper_sql = sql.upper()
     for kw in _FORBIDDEN_KEYWORDS:

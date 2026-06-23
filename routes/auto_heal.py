@@ -4,21 +4,23 @@ AI 自动巡检与自愈合路由（B 端）
 import os
 import json
 import re
+import uuid
+import sqlite3
 from fastapi import APIRouter
 from pydantic import BaseModel
 from openai import OpenAI
 import requests
 from config import (
     DB_FILE, API_KEY, BASE_URL, CHAT_MODEL, JUDGE_MODEL,
-    LONGCAT_API_KEY, HEAL_MODEL
+    LONGCAT_API_KEY, LONGCAT_BASE_URL, HEAL_MODEL
 )
 from logger import logger
+from utils.json_store import (
+    load_bad_cases, save_bad_cases,
+    load_dynamic_archive, save_dynamic_archive,
+)
 
 router = APIRouter()
-
-# 文件路径
-JSON_LOG_FILE = "bad_cases_staging.json"
-DYNAMIC_JSON_FILE = "dynamic_cases_archive.json"
 
 # 数据模型
 class SearchLogRequest(BaseModel):
@@ -46,7 +48,7 @@ def _init_qwen_client():
 
 
 def _init_longcat_client():
-    return OpenAI(api_key=LONGCAT_API_KEY, base_url="https://api.longcat.chat/v1")
+    return OpenAI(api_key=LONGCAT_API_KEY, base_url=LONGCAT_BASE_URL)
 
 
 # ==========================================
@@ -58,11 +60,8 @@ def trigger_auto_heal():
     if not os.path.exists(JSON_LOG_FILE):
         return {"status": "success", "message": "草稿箱为空，无需巡检。"}
 
-    with open(JSON_LOG_FILE, 'r', encoding='utf-8') as f:
-        cases = json.load(f)
-
-    with open(DYNAMIC_JSON_FILE, 'r', encoding='utf-8') as f:
-        dynamic_archive = json.load(f)
+    cases = load_bad_cases()
+    dynamic_archive = load_dynamic_archive()
 
     healed_count = 0
     manual_count = 0
@@ -147,8 +146,8 @@ def trigger_auto_heal():
                 has_changes = True
                 continue
 
-            # 角色 2：AI 修复师
-            rag_context = fetch_local_knowledge_context(query)
+            # 角色 2：AI 修复师（复用第一次查询结果，避免重复 HTTP 请求）
+            rag_context = ground_truth_context
 
             heal_prompt = f"""你是一位极其严谨的首席金融分析师。
 
@@ -191,7 +190,6 @@ def trigger_auto_heal():
                 case['corrected_answer'] = ""
                 manual_count += 1
             else:
-                import sqlite3
                 conn = sqlite3.connect(DB_FILE)
                 cursor = conn.cursor()
                 cursor.execute('''
@@ -221,11 +219,8 @@ def trigger_auto_heal():
             remaining_cases.append(case)
 
     if has_changes:
-        with open(JSON_LOG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(remaining_cases, f, ensure_ascii=False, indent=2)
-
-        with open(DYNAMIC_JSON_FILE, 'w', encoding='utf-8') as f:
-            json.dump(dynamic_archive, f, ensure_ascii=False, indent=2)
+        save_bad_cases(remaining_cases)
+        save_dynamic_archive(dynamic_archive)
 
     return {
         "status": "success",

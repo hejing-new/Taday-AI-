@@ -73,6 +73,15 @@ financeagent.md
 project_analysis.md
 
 # ==========================================
+# 所有 Markdown 文件（除 README.md 和 prd.md 外）
+# ==========================================
+*.md
+!README.md
+!prd.md
+!docker-readme.md
+!todolist.md
+
+# ==========================================
 # Claude Code / AI 工具配置
 # ==========================================
 .claude/

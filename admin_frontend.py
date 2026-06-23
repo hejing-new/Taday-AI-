@@ -124,7 +124,7 @@ def delete_chunk(chunk_id, doc_id):
 
 def publish_doc(doc_id):
     if not doc_id: return "⚠️ 请先在上方看板选中一个待审核的文档！", fetch_dashboard()
-    resp = requests.post(f"{ADMIN_API_URL}/docs/{doc_id}/publish", auth=ADMIN_AUTH)
+    resp = requests.post(f"{ADMIN_API_URL}/docs/{doc_id}/publish", auth=ADMIN_AUTH, timeout=30)
     if resp.status_code == 200:
         return f"🚀 {resp.json()['message']}", fetch_dashboard()
     return f"❌ 发布失败: {resp.text}", fetch_dashboard()
@@ -393,7 +393,8 @@ with gr.Blocks(title="知识库控制台", theme=gr.themes.Base()) as demo:
             resp = requests.post(
                 f"{ADMIN_API_URL}/bad_cases/{case_id}/fix",
                 json={"correct_answer": correct_ans},
-                auth=ADMIN_AUTH
+                auth=ADMIN_AUTH,
+                timeout=30,
             )
             if resp.status_code == 200:
                 return f"✅ {resp.json()['message']}", fetch_bad_cases()
@@ -457,7 +458,7 @@ with gr.Blocks(title="知识库控制台", theme=gr.themes.Base()) as demo:
     def handle_ignore(case_id):
         if not case_id: return "⚠️ 请先选中案例", fetch_bad_cases()
         # 调一个后端接口把它标为废弃 (后端只需写一个很简单的接口更新 status 即可)
-        requests.post(f"{ADMIN_API_URL}/bad_cases/{case_id}/ignore", auth=ADMIN_AUTH)
+        requests.post(f"{ADMIN_API_URL}/bad_cases/{case_id}/ignore", auth=ADMIN_AUTH, timeout=30)
         return "🗑️ 已将该误报移入废弃站", fetch_bad_cases()
 
     ignore_btn.click(handle_ignore, inputs=[selected_case_id], outputs=[bc_action_log, bad_case_table])

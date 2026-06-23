@@ -1,0 +1,169 @@
+# ==========================================
+# Taday 金融智能体 — Docker Compose 编排
+#
+# 使用方式:
+#   docker-compose up -d              # 启动全部服务
+#   docker-compose up -d api          # 只启动 API 后端
+#   docker-compose up -d chat         # 只启动对话界面
+#   docker-compose down               # 停止所有服务
+#   docker-compose logs -f api        # 查看 API 日志
+# ==========================================
+
+version: "3.9"
+
+services:
+  # --- FastAPI 对话后端 ---
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: taday-api
+    ports:
+      - "8002:8002"
+    environment:
+      - PORT_API=8002
+      - PORT_ADMIN_API=8004
+      - BASE_URL=${BASE_URL:-https://api.siliconflow.cn/v1}
+      - API_KEY=${API_KEY:-}
+      - LONGCAT_API_KEY=${LONGCAT_API_KEY:-}
+      - LONGCAT_BASE_URL=${LONGCAT_BASE_URL:-https://api.longcat.chat/openai/v1}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.longcat.chat/openai/v1}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+      - CHAT_MODEL=${CHAT_MODEL:-LongCat-2.0-Preview}
+      - JUDGE_MODEL=${JUDGE_MODEL:-Qwen/Qwen2.5-72B-Instruct}
+      - HEAL_MODEL=${HEAL_MODEL:-LongCat-Flash-Thinking-2601}
+      - EMBED_MODEL=${EMBED_MODEL:-BAAI/bge-m3}
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASS=${ADMIN_PASS:-}
+      - DOCKER_HOST=1
+      - PYTHONUTF8=1
+      - PYTHONIOENCODING=utf-8
+    volumes:
+      - chroma_data:/app/chroma_db
+      - app_data:/app/data
+      - temp_data:/app/temp_storage
+      - ./conversations.db:/app/conversations.db
+    networks:
+      - taday-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8002/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # --- FastAPI 管理后台 API ---
+  admin-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: taday-admin-api
+    ports:
+      - "8004:8004"
+    environment:
+      - PORT_API=8002
+      - PORT_ADMIN_API=8004
+      - BASE_URL=${BASE_URL:-https://api.siliconflow.cn/v1}
+      - API_KEY=${API_KEY:-}
+      - LONGCAT_API_KEY=${LONGCAT_API_KEY:-}
+      - LONGCAT_BASE_URL=${LONGCAT_BASE_URL:-https://api.longcat.chat/openai/v1}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.longcat.chat/openai/v1}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+      - CHAT_MODEL=${CHAT_MODEL:-LongCat-2.0-Preview}
+      - JUDGE_MODEL=${JUDGE_MODEL:-Qwen/Qwen2.5-72B-Instruct}
+      - HEAL_MODEL=${HEAL_MODEL:-LongCat-Flash-Thinking-2601}
+      - EMBED_MODEL=${EMBED_MODEL:-BAAI/bge-m3}
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASS=${ADMIN_PASS:-}
+      - DOCKER_HOST=1
+      - PYTHONUTF8=1
+      - PYTHONIOENCODING=utf-8
+    volumes:
+      - chroma_data:/app/chroma_db
+      - app_data:/app/data
+      - temp_data:/app/temp_storage
+      - ./conversations.db:/app/conversations.db
+    networks:
+      - taday-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8004/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # --- Gradio 对话前端 ---
+  chat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: taday-chat
+    ports:
+      - "7860:7860"
+    environment:
+      - PORT_CHAT=7860
+      - PORT_API=8002
+      - PORT_ADMIN_API=8004
+      - API_URL=http://api:8002
+      - ADMIN_API_URL=http://admin-api:8004
+      - CHAT_MODEL=${CHAT_MODEL:-LongCat-2.0-Preview}
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASS=${ADMIN_PASS:-}
+      - DOCKER_HOST=1
+      - PYTHONUTF8=1
+      - PYTHONIOENCODING=utf-8
+    depends_on:
+      api:
+        condition: service_healthy
+      admin-api:
+        condition: service_healthy
+    networks:
+      - taday-net
+    restart: unless-stopped
+
+  # --- Gradio 管理后台 ---
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: taday-admin
+    ports:
+      - "7861:7861"
+    environment:
+      - PORT_ADMIN=7861
+      - PORT_API=8002
+      - PORT_ADMIN_API=8004
+      - API_URL=http://api:8002
+      - ADMIN_API_URL=http://admin-api:8004
+      - CHAT_MODEL=${CHAT_MODEL:-LongCat-2.0-Preview}
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASS=${ADMIN_PASS:-}
+      - DOCKER_HOST=1
+      - PYTHONUTF8=1
+      - PYTHONIOENCODING=utf-8
+    depends_on:
+      api:
+        condition: service_healthy
+      admin-api:
+        condition: service_healthy
+    networks:
+      - taday-net
+    restart: unless-stopped
+
+# --- 持久化 volumes ---
+volumes:
+  chroma_data:
+    driver: local
+  app_data:
+    driver: local
+  temp_data:
+    driver: local
+
+# --- 网络 ---
+networks:
+  taday-net:
+    driver: bridge

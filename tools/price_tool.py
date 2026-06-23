@@ -1,8 +1,6 @@
 import os
-# ================= 强行注入网络代理 =================
-# 请确保你的梯子/代理软件处于打开状态，并核对端口号
-os.environ["http_proxy"] = "http://127.0.0.1:7890"
-os.environ["https_proxy"] = "http://127.0.0.1:7890"
+# 代理配置：优先使用系统环境变量（HTTP_PROXY/HTTPS_PROXY），不再硬编码
+# 如需自定义代理，在 .env 或系统环境中设置 HTTP_PROXY / HTTPS_PROXY
 
 import yfinance as yf
 from langchain_core.tools import tool

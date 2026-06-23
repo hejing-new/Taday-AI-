@@ -31,13 +31,29 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
         )
     return credentials.username
 
-# 🚀 全局内存存储：存放每个 Session 的临时查询引擎
-temp_engines = {}
+# 🚀 全局内存存储：存放每个 Session 的临时查询引擎（LRU 淘汰，防内存泄漏）
+from collections import OrderedDict
+_temp_engines = OrderedDict()
+MAX_TEMP_ENGINES = 50  # 最多保留 50 个会话的临时引擎
+_TEMP_ENGINE_TTL = 3600  # 1 小时过期
+
+
+def _get_temp_engine(session_id: str):
+    """获取临时引擎，不存在返回 None"""
+    return _temp_engines.get(session_id)
+
+
+def _set_temp_engine(session_id: str, engine):
+    """存储临时引擎，超出限制时淘汰最早的"""
+    _temp_engines[session_id] = engine
+    # LRU 淘汰：超出限制则移除最早的条目
+    while len(_temp_engines) > MAX_TEMP_ENGINES:
+        _temp_engines.popitem(last=False)
 
 
 # 把根目录加入路径，导入你的真实后端
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from tools.rag_tool import report_query_engine
+from tools.rag_tool import get_query_engine
 
 # ==========================================
 # 1. 初始化 FastAPI 实例
@@ -96,9 +112,9 @@ async def upload_temp_document(session_id: str, file: UploadFile = File(...), us
         loader = PyMuPDFReader()
         documents = loader.load_data(file_path=file_path)
 
-        # 构建一个临时的内存引擎
+        # 构建一个临时的内存引擎（带 LRU 淘汰）
         index = SummaryIndex.from_documents(documents)
-        temp_engines[session_id] = index.as_query_engine()
+        _set_temp_engine(session_id, index.as_query_engine())
 
         return {"status": "success", "message": f"文档 {file.filename} 已挂载至会话 {session_id}"}
     except HTTPException:
@@ -113,12 +129,12 @@ async def chat_endpoint(request: ChatRequest):
     """
     try:
         # 🚀 核心逻辑：优先检查是否有临时文档引擎
-        if request.session_id in temp_engines:
+        engine = _get_temp_engine(request.session_id)
+        if engine is not None:
             print(f"🔍 使用临时私有引擎处理会话: {request.session_id}")
-            engine = temp_engines[request.session_id]
         else:
             print(f"📚 使用公共财报库处理会话: {request.session_id}")
-            engine = report_query_engine
+            engine = get_query_engine()
 
         response = engine.query(request.query)
         
@@ -159,7 +175,46 @@ async def chat_endpoint(request: ChatRequest):
 
 
 # ==========================================
-# 4. 启动服务 (仅在直接运行此文件时执行)
+# 5. 对话历史管理接口
+# ==========================================
+from utils.conversation_store import (
+    get_history, clear_history, get_all_sessions, get_session_stats
+)
+
+
+@app.get("/api/v1/history/{session_id}", summary="获取会话历史")
+async def get_conversation_history(session_id: str, limit: int = 50):
+    """获取指定会话的对话历史（用于前端恢复对话）"""
+    try:
+        history = get_history(session_id, limit=limit)
+        return {"session_id": session_id, "messages": history, "count": len(history)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/v1/history/{session_id}", summary="清空会话历史")
+async def clear_conversation_history(session_id: str):
+    """清空指定会话的对话历史"""
+    try:
+        clear_history(session_id)
+        return {"status": "success", "message": f"会话 {session_id} 已清空"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/sessions", summary="获取所有会话列表（管理员）")
+async def list_sessions(username: str = Depends(verify_admin)):
+    """获取所有活跃会话列表"""
+    try:
+        sessions = get_all_sessions()
+        stats = get_session_stats()
+        return {"sessions": sessions, "stats": stats}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# 6. 启动服务 (仅在直接运行此文件时执行)
 # ==========================================
 if __name__ == "__main__":
     from config import PORT_API
