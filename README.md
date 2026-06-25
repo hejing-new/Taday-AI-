@@ -174,13 +174,114 @@ docker-compose down -v
 ## 运行测试
 
 ```bash
-# 运行所有测试
+# 单元测试
 python tests/test_rag_tool.py
 python tests/test_chunker.py
 
 # 测试覆盖：
 # - test_rag_tool.py: 21 个测试 (分词 + BM25 + 数字boost + 查询扩展 + SQL注入)
 # - test_chunker.py: 17 个测试 (章节检测 + 表格检测 + token估算 + 端到端分块)
+```
+
+## RAG 评测 (Ragas)
+
+基于 [Ragas](https://github.com/explodinggradients/ragas) v0.2 框架的自动化评测系统，用于量化评估 RAG 检索质量，支持**固定回归集 + 基线对比**，确保每次代码改动可度量、可追溯。
+
+### 评测指标
+
+| 指标 | 说明 | 对应能力 |
+|------|------|---------|
+| **Faithfulness** | 回答是否基于检索结果生成，不编造 | 整体 RAG 可靠性 |
+| **Answer Relevancy** | 回答是否切题，不偏题 | 语义理解质量 |
+| **Context Precision** | 检索上下文中有效信息的比例 | 检索精准度（分块/精排） |
+| **Context Recall** | 检索是否召回所有相关信息 | 检索覆盖率（BM25/查询扩展） |
+
+### 评测模式
+
+| 模式 | 命令 | 说明 |
+|------|------|------|
+| **动态出题** | `python eval/auto_eval.py --n 5` | 从 ChromaDB 随机抽题，每次题目不同 |
+| **固定回归** | `python eval/auto_eval.py --fixed` | 使用 `regression_set.json` 固定 10 题，每次题目一致 |
+| **保存基线** | `python eval/auto_eval.py --fixed --baseline` | 保存当前结果为 `baseline.json` |
+| **基线对比** | `python eval/auto_eval.py --fixed --compare` | 和基线做逐指标对比，标注退化/提升 |
+| **启用 CE** | 任意命令加 `--ce` | 启用 Cross-Encoder 精排 |
+
+### 固定回归测试集
+
+`eval/regression_set.json` — 10 题覆盖 5 种题型：
+
+| 题型 | 数量 | 考察点 | 示例 |
+|------|------|--------|------|
+| `numeric` 数字类 | 3 | 精确数字匹配 | "动力电池系统营业收入是多少？" |
+| `table` 表格类 | 2 | 表格完整性保护 | "现金流量表中经营活动净额？" |
+| `narrative` 叙述类 | 2 | 语义理解能力 | "海外产能扩张战略布局？" |
+| `synonym` 同义词类 | 2 | 同义词扩展 | "归母净利润是多少？" → 匹配"归属于上市公司股东的净利润" |
+| `numeric` 产能类 | 1 | 产能数据精确检索 | "动力电池系统产能是多少GWh？" |
+
+### 使用流程
+
+```bash
+# 1. 改动代码前：保存基线
+python eval/auto_eval.py --fixed --baseline
+
+# 2. 改动代码（如调分块器、加检索策略等）
+
+# 3. 改动后：跑对比
+python eval/auto_eval.py --fixed --save --compare
+```
+
+### 输出示例
+
+```
+📊 Taday Ragas 评测报告 — HybridQueryEngine [固定回归]
+   时间: 2026-06-24 23:30:00
+==========================================================================================
+
+id        category  faithfulness  answer_relevancy  context_precision  context_recall
+REV-001   numeric         0.8700            0.8500             0.8200          0.8000
+REV-002   numeric         0.9200            0.8800             0.8500          0.8300
+REV-003   numeric         0.9000            0.8200             0.7800          0.7500
+REV-004   table           0.8500            0.8000             0.7600          0.7200
+...
+
+📈 汇总统计:
+   faithfulness          = 0.8700 (±0.0421)
+   answer_relevancy      = 0.8300 (±0.0350)
+   context_precision     = 0.7900 (±0.0512)
+   context_recall        = 0.7700 (±0.0633)
+
+📂 按题型分类:
+   [numeric] (4 题)
+      faithfulness: 0.9025, answer_relevancy: 0.8625
+   [table] (2 题)
+      faithfulness: 0.8500, answer_relevancy: 0.8000
+```
+
+### 基线对比输出
+
+```
+==========================================================================================
+📊 基线对比报告
+   基线时间: 2026-06-24T23:16:00
+   当前时间: 2026-06-24T23:30:00
+==========================================================================================
+
+指标                   基线       本次       变化     状态
+------------------------------------------------------------
+faithfulness         0.8200    0.8700   +0.0500   ✅ 提升
+answer_relevancy     0.7500    0.8300   +0.0800   ✅ 提升
+context_precision    0.7000    0.6800   -0.0200   ⚠️ 退化
+context_recall       0.6500    0.8000   +0.1500   ✅ 提升
+```
+
+### 评测文件结构
+
+```
+eval/
+├── auto_eval.py            # 评测脚本 (v3)
+├── regression_set.json     # 固定回归测试集 (10 题)
+├── baseline.json           # 基线数据 (运行 --baseline 后自动生成)
+└── ragas_evaluation_results.json  # 详细结果 (运行 --save 后生成)
 ```
 
 ## 项目结构
@@ -221,6 +322,11 @@ finance_agent_3/
 ├── tests/                      # 单元测试
 │   ├── test_rag_tool.py        # RAG 工具测试 (21 个)
 │   └── test_chunker.py         # 分块器测试 (17 个)
+│
+├── eval/                       # RAG 评测 (Ragas)
+│   ├── auto_eval.py            # 评测脚本 (固定回归 + 基线对比)
+│   ├── regression_set.json     # 固定回归测试集 (10 题, 5 种题型)
+│   └── baseline.json           # 基线数据 (自动生成)
 │
 ├── data/                       # 财报 PDF
 ├── chroma_db/                  # 向量数据库
@@ -281,6 +387,7 @@ finance_agent_3/
 - **混合检索**: 向量 + BM25 + 数字匹配 + 查询扩展
 - **精排**: Cross-Encoder（可选，sentence-transformers）
 - **分块**: 财报专用分块器（章节切割 → 表格保护 → 语义细分）
+- **RAG 评测**: Ragas v0.2（Faithfulness / AnswerRelevancy / ContextPrecision / ContextRecall）
 - **Web 框架**: FastAPI
 - **前端**: Gradio
 - **对话持久化**: SQLite（线程安全，WAL 模式）
@@ -292,4 +399,6 @@ finance_agent_3/
 - **数据**: `data/宁德时代2025年度报告.pdf`
 - **向量库**: `chroma_db/` (PersistentClient)
 - **对话历史**: `conversations.db` (自动生成)
-- **测试脚本**: `tests/test_rag_tool.py` + `tests/test_chunker.py`
+- **单元测试**: `tests/test_rag_tool.py` (21 个) + `tests/test_chunker.py` (17 个)
+- **RAG 评测**: `eval/auto_eval.py` (Ragas v0.2, 固定回归 + 基线对比)
+- **回归测试集**: `eval/regression_set.json` (10 题, 覆盖 numeric/table/narrative/synonym)

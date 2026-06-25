@@ -38,9 +38,9 @@ def _get_llm():
     return _llm_instance
 
 def _rag_query(query, **_):
-    """适配混合引擎和标准引擎的查询"""
-    engine = get_query_engine()
-    return engine.query(query)
+    """适配混合引擎和标准引擎的查询，返回格式化字符串"""
+    from tools.rag_tool import analyze_catl_report
+    return analyze_catl_report.invoke({"query": query})
 
 TOOL_REGISTRY = {
     "analyze_catl_report": {
@@ -204,8 +204,8 @@ def run_react(user_question: str, thread_id: str = "default", history_messages: 
             messages.append(HumanMessage(content=f"Tool result: {result}"))
 
             # Collect source evidence（限制长度，防止无限制增长）
-            _MAX_SOURCE_TOTAL = 2000   # source_cards 总长度上限
-            _MAX_PER_TOOL = 800        # 单条工具结果最大长度
+            _MAX_SOURCE_TOTAL = 1500   # source_cards 总长度上限
+            _MAX_PER_TOOL = 500        # 单条工具结果最大长度
             if tool_name == "analyze_catl_report":
                 addition = f"\n#### Tool: {tool_name}\n> {result[:_MAX_PER_TOOL]}\n"
                 if len(source_cards) + len(addition) <= _MAX_SOURCE_TOTAL:

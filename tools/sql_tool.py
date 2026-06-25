@@ -7,20 +7,26 @@
 import sqlite3
 import re
 from langchain_core.tools import tool
-from config import CHAT_MODEL, API_KEY, BASE_URL
+from config import CHAT_MODEL, LONGCAT_API_KEY, LONGCAT_BASE_URL, API_KEY, BASE_URL
 from logger import logger
 
 # 数据库路径
 DB_PATH = "finance_data.db"
 
-# Schema 信息
+# Schema 信息 — 精确描述，禁止 LLM 使用不存在的列
 SCHEMA_INFO = """
-数据库包含一张表: catl_finance
-字段说明:
-- year (INTEGER): 年份，例如 2021, 2022, 2023, 2024
+数据库包含且仅包含一张表: catl_finance
+字段说明（只允许使用以下 4 个字段，严禁使用其他任何列名）:
+- year (INTEGER): 年份，取值范围 2021~2024，例如 2021, 2022, 2023, 2024
 - revenue_bn (REAL): 营业收入，单位是"亿元"
 - net_profit_bn (REAL): 净利润，单位是"亿元"
 - gross_margin (REAL): 毛利率，单位是百分比"%"
+
+⚠️ 重要约束:
+1. 该表只有上述 4 个字段，不存在 department / product_line / business / segment 等业务部门列
+2. 如果用户提问涉及业务部门（如动力电池、储能等），请仅使用 year/revenue_bn/net_profit_bn/gross_margin 作答，
+   并明确说明数据库中没有业务部门维度数据，只能提供公司整体数据
+3. 只允许使用 year, revenue_bn, net_profit_bn, gross_margin 这四个列名
 """
 
 # SQL 注入防护：只允许以 SELECT 开头的语句
@@ -41,9 +47,9 @@ def _get_llm():
         from langchain_openai import ChatOpenAI
         _llm_instance = ChatOpenAI(
             model=CHAT_MODEL,
-            api_key=API_KEY,
-            base_url="https://api.siliconflow.cn/v1",
-            temperature=0.1
+            api_key=LONGCAT_API_KEY or API_KEY,
+            base_url=LONGCAT_BASE_URL or BASE_URL,
+            temperature=0.1,
         )
     return _llm_instance
 
@@ -93,9 +99,7 @@ def query_financial_db(query: str) -> str:
         # 2. 让大模型写出 SQL
         response = llm.invoke(prompt)
         sql_query = response.content.strip()
-
-        # 清洗 markdown 标记
-        sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
+        sql_query = sql_query.replace("```sql", "").replace("```", "").strip().rstrip(";").strip()
         logger.info(f"生成的底层 SQL: {sql_query}")
 
         # 3. SQL 注入防护校验
@@ -113,7 +117,8 @@ def query_financial_db(query: str) -> str:
         conn.close()
 
         if not results:
-            return f"执行 SQL: {sql_query} 后，未查到任何数据。可能是年份超出了数据库范围。"
+            return (f"执行 SQL: {sql_query} 后，未查到任何数据。"
+                    f"数据库中仅有 2021~2024 年的数据，不支持 2025 年及之后的查询。")
 
         # 5. 格式化返回
         formatted_result = f"✅ 数据库查询成功 (执行的SQL: {sql_query})\n"

@@ -1,5 +1,14 @@
 import sys
 import os
+import io
+
+# Windows 编码修复：必须在所有 import 之前设置
+if sys.platform == 'win32':
+    os.environ["PYTHONUTF8"] = "1"
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 import uvicorn
 import secrets
 from fastapi import FastAPI, HTTPException, Depends, status

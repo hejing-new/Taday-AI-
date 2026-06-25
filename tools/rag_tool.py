@@ -30,7 +30,7 @@ from llama_index.readers.file import PyMuPDFReader
 
 from tools.financial_chunker import chunk_financial_report, ChunkCandidate
 
-from config import API_KEY, BASE_URL, CHAT_MODEL, EMBED_MODEL, CHROMA_DB_PATH, DATA_PATH, LLM_BASE_URL, LLM_API_KEY
+from config import API_KEY, BASE_URL, CHAT_MODEL, EMBED_MODEL, CHROMA_DB_PATH, DATA_PATH, LLM_BASE_URL, LLM_API_KEY, LONGCAT_API_KEY
 from logger import logger
 
 # UTF-8 环境防护
@@ -83,10 +83,14 @@ class SafeSiliconFlowEmbedding(OpenAIEmbedding):
 
 
 def _get_embedding_model():
-    """获取 Embedding 模型（带限流保护）"""
+    """获取 Embedding 模型（带限流保护）
+
+    Embedding 必须走 SiliconFlow (支持 BAAI/bge-m3)，
+    LongCat 不支持 embedding 接口。
+    """
     current = Settings.embed_model
     if current is not None and hasattr(current, 'api_base') and hasattr(current, 'api_key'):
-        if current.api_base == LLM_BASE_URL and current.api_key == LLM_API_KEY:
+        if current.api_base == BASE_URL and current.api_key == API_KEY:
             return current
     Settings.embed_model = SafeSiliconFlowEmbedding(
         model_name=EMBED_MODEL,
@@ -540,6 +544,8 @@ def get_query_engine(collection_name: str = "catl_report", pdf_filename: str = N
 
     chroma_collection = db.get_or_create_collection(collection_name)
     vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+    # llama-index 0.14.x 的 StorageContext.from_defaults 不接受 embed_model 参数
+    # embed_model 应通过 Settings.embed_model 或 VectorStoreIndex.from_vector_store 传入
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
     if collection_name in collections and chroma_collection.count() > 0:
@@ -685,7 +691,7 @@ def analyze_catl_report(query: str, collection_name: str = "catl_report") -> str
         final_res = f"【结论】: {final_answer}\n\n【知识库原始证据】:\n"
 
         if source_nodes:
-            for i, node in enumerate(source_nodes[:5]):  # 从 3 增加到 5
+            for i, node in enumerate(source_nodes[:3]):
                 file_name = node.metadata.get('file_name', node.metadata.get('file_path', '未知文件'))
                 if file_name != '未知文件':
                     file_name = os.path.basename(file_name)
